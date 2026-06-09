@@ -284,11 +284,11 @@ export default function App() {
 
   const [loading,      setLoading]      = useState(true);
   const [profileOpen,  setProfileOpen]  = useState(false);
-  const [churchName,   setChurchName]   = useState("Church Photo Studio");
+  const [churchName,   setChurchName]   = useState(() => localStorage.getItem("cps_churchName") || "Church Photo Studio");
   const [fadeOut,      setFadeOut]      = useState(false);
   const [watermark,    setWatermark]    = useState(null);
   const [watermarkImg, setWatermarkImg] = useState(null);
-  const [profilePic,   setProfilePic]  = useState(null);
+  const [profilePic,   setProfilePic]  = useState(() => localStorage.getItem("cps_profilePic") || null);
   const [queue,        setQueue]        = useState([]);
   const [dragging,     setDragging]     = useState(false);
   const [wmScale,      setWmScale]      = useState(35);
@@ -303,6 +303,17 @@ export default function App() {
     const t2 = setTimeout(() => setLoading(false), 3100);
     return () => { clearTimeout(t1); clearTimeout(t2); };
   }, []);
+
+  // Persist profile pic to localStorage
+  useEffect(() => {
+    if (profilePic) localStorage.setItem("cps_profilePic", profilePic);
+    else localStorage.removeItem("cps_profilePic");
+  }, [profilePic]);
+
+  // Persist church name to localStorage
+  useEffect(() => {
+    localStorage.setItem("cps_churchName", churchName);
+  }, [churchName]);
 
   useEffect(() => {
     if (!watermark) { setWatermarkImg(null); return; }
@@ -591,15 +602,19 @@ export default function App() {
           position:"sticky", top:0, zIndex:100,
         }}>
           <div style={{position:"relative",flexShrink:0,marginRight:4}}>
-            {/* Circular profile picture */}
-            <div style={{
+            {/* Circular profile picture — click opens profile page */}
+            <div onClick={()=>setProfileOpen(true)} style={{
               width:52, height:52, borderRadius:"50%",
               background:profilePic?"transparent":"#1a3560",
               border:"3px solid #1a3560",
               display:"flex",alignItems:"center",justifyContent:"center",
-              overflow:"hidden",
+              overflow:"hidden", cursor:"pointer",
               boxShadow:"0 2px 12px rgba(26,53,96,0.25)",
-            }}>
+              transition:"transform 0.15s, box-shadow 0.15s",
+            }}
+              onMouseEnter={e=>{e.currentTarget.style.transform="scale(1.06)";e.currentTarget.style.boxShadow="0 4px 16px rgba(26,53,96,0.4)";}}
+              onMouseLeave={e=>{e.currentTarget.style.transform="scale(1)";e.currentTarget.style.boxShadow="0 2px 12px rgba(26,53,96,0.25)";}}
+            >
               {profilePic
                 ?<img src={profilePic} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
                 :<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -607,16 +622,6 @@ export default function App() {
                   <circle cx="12" cy="13" r="4"/>
                 </svg>
               }
-            </div>
-            {/* Edit badge — opens profile modal */}
-            <div onClick={()=>setProfileOpen(true)} style={{
-              position:"absolute",bottom:-4,left:"50%",transform:"translateX(-50%)",
-              background:"#1a3560",borderRadius:20,padding:"2px 8px",
-              display:"flex",alignItems:"center",gap:3,
-              border:"2px solid #fff",zIndex:4,whiteSpace:"nowrap",
-              boxShadow:"0 1px 4px rgba(0,0,0,0.2)",cursor:"pointer",
-            }}>
-              <span style={{fontSize:9,color:"#fff",fontWeight:700,letterSpacing:"0.03em"}}>Edit</span>
             </div>
           </div>
           <div style={{flex:1,minWidth:0}}>
