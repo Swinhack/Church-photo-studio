@@ -34,6 +34,62 @@ function applyPortraitTone(ctx, w, h) {
   }
   ctx.putImageData(d, 0, 0);
 }
+// ── Blur detection using Laplacian variance ──────────────────
+// Low variance = blurry image, high variance = sharp image
+function detectBlur(ctx, w, h) {
+  const sample = ctx.getImageData(Math.floor(w*0.1), Math.floor(h*0.1), Math.floor(w*0.8), Math.floor(h*0.8));
+  const px = sample.data, sw = Math.floor(w*0.8), sh = Math.floor(h*0.8);
+  let sum = 0, count = 0;
+  // Laplacian kernel: measures edge sharpness
+  for (let y = 1; y < sh - 1; y += 2) {
+    for (let x = 1; x < sw - 1; x += 2) {
+      const i = (y * sw + x) * 4;
+      const lum = (r,g,b) => r*0.299 + g*0.587 + b*0.114;
+      const c  = lum(px[i],   px[i+1],   px[i+2]);
+      const t  = lum(px[i-sw*4], px[i-sw*4+1], px[i-sw*4+2]);
+      const b2 = lum(px[i+sw*4], px[i+sw*4+1], px[i+sw*4+2]);
+      const l  = lum(px[i-4], px[i-3], px[i-2]);
+      const r2 = lum(px[i+4], px[i+5], px[i+6]);
+      const lap = Math.abs(4*c - t - b2 - l - r2);
+      sum += lap * lap; count++;
+    }
+  }
+  const variance = count > 0 ? sum / count : 9999;
+  return { isBlurry: variance < 180, score: variance };
+}
+
+// ── Deblur pipeline — multi-pass sharpening + clarity + edge boost ──
+function applyDeblur(ctx, w, h) {
+  // Pass 1: strong unsharp mask
+  applySharpen(ctx, w, h, 0.55);
+  // Pass 2: edge enhancement using high-boost filter
+  const src = ctx.getImageData(0, 0, w, h);
+  const dst = ctx.createImageData(w, h);
+  const s = src.data, d = dst.data;
+  // High-boost kernel — amplifies edges more aggressively
+  const K = [-1,-2,-1,-2,13,-2,-1,-2,-1];
+  const blend = 0.35;
+  for (let y = 1; y < h-1; y++) {
+    for (let x = 1; x < w-1; x++) {
+      const idx = (y*w+x)*4;
+      for (let c = 0; c < 3; c++) {
+        let v = 0;
+        for (let ky=-1; ky<=1; ky++)
+          for (let kx=-1; kx<=1; kx++)
+            v += s[((y+ky)*w+(x+kx))*4+c] * K[(ky+1)*3+(kx+1)];
+        v /= 1;
+        d[idx+c] = Math.min(255,Math.max(0,Math.round(s[idx+c]*(1-blend)+v*blend)));
+      }
+      d[idx+3] = s[idx+3];
+    }
+  }
+  ctx.putImageData(dst, 0, 0);
+  // Pass 3: clarity boost for micro-detail
+  applyClarity(ctx, w, h);
+  // Pass 4: final light sharpen to crisp up
+  applySharpen(ctx, w, h, 0.22);
+}
+
 function isLowQuality(img) {
   return (img.width * img.height) / 1_000_000 < 4 || img.width < 2560 || img.height < 1440;
 }
@@ -283,8 +339,15 @@ export default function App() {
         oc.filter="none";
         applyPortraitTone(oc,W,H);
         if(needsSkinSmoothing(oc,W,H)) applySkinSmooth(oc,W,H);
+        // Blur detection & deblur
+        const blurResult = detectBlur(oc, W, H);
+        const wasDeblurred = blurResult.isBlurry;
+        if (wasDeblurred) {
+          applyDeblur(oc, W, H);
+        }
+
         applyWarmth(oc,W,H,3);
-        if(lowQ) applyUltraDetail(oc,W,H); else applySharpen(oc,W,H,0.28);
+        if(lowQ && !wasDeblurred) applyUltraDetail(oc,W,H); else if(!wasDeblurred) applySharpen(oc,W,H,0.28);
         if(applyFocus) applyUltraFocus(oc,W,H);
         const canvas=document.createElement("canvas"); canvas.width=W; canvas.height=H;
         const ctx=canvas.getContext("2d"); ctx.drawImage(off,0,0);
@@ -307,7 +370,7 @@ export default function App() {
           else if(wmPos==="bottom-right"){wx=W-wmW-pad;wy=H-wmH-pad;} else{wx=(W-wmW)/2;wy=H-wmH-pad;}
           ctx.globalAlpha=wmOpacity/100; ctx.drawImage(watermarkImg,wx,wy,wmW,wmH); ctx.globalAlpha=1;
         }
-        resolve({dataUrl:canvas.toDataURL("image/jpeg",0.97), baseDataUrl, enhanced:lowQ});
+        resolve({dataUrl:canvas.toDataURL("image/jpeg",0.97), baseDataUrl, enhanced:lowQ, deblurred:wasDeblurred});
       };
       img.src=src;
     });
@@ -318,12 +381,12 @@ export default function App() {
     if(!valid.length) return;
     const items=await Promise.all(valid.map(async file=>{
       const src=await new Promise(r=>{const rd=new FileReader();rd.onload=e=>r(e.target.result);rd.readAsDataURL(file);});
-      return{id:`${Date.now()}-${Math.random()}`,name:file.name,original:src,status:"processing",output:null,focusOutput:null,focusActive:false,enhanced:false};
+      return{id:`${Date.now()}-${Math.random()}`,name:file.name,original:src,status:"processing",output:null,focusOutput:null,focusActive:false,enhanced:false,deblurred:false};
     }));
     setQueue(prev=>[...prev,...items]);
     for(const item of items){
       const res=await renderToCanvas(item.original,false);
-      setQueue(prev=>prev.map(q=>q.id===item.id?{...q,status:"done",output:res.dataUrl,baseOutput:res.baseDataUrl,enhanced:res.enhanced}:q));
+      setQueue(prev=>prev.map(q=>q.id===item.id?{...q,status:"done",output:res.dataUrl,baseOutput:res.baseDataUrl,enhanced:res.enhanced,deblurred:res.deblurred}:q));
     }
   }, [renderToCanvas]);
 
@@ -334,7 +397,7 @@ export default function App() {
       for(const item of queue){
         setQueue(prev=>prev.map(q=>q.id===item.id?{...q,status:"processing"}:q));
         const res=await renderToCanvas(item.original,false);
-        setQueue(prev=>prev.map(q=>q.id===item.id?{...q,status:"done",output:res.dataUrl,baseOutput:res.baseDataUrl,enhanced:res.enhanced}:q));
+        setQueue(prev=>prev.map(q=>q.id===item.id?{...q,status:"done",output:res.dataUrl,baseOutput:res.baseDataUrl,enhanced:res.enhanced,deblurred:res.deblurred}:q));
       }
     };
     run();
@@ -730,6 +793,7 @@ export default function App() {
                           <div style={{position:"absolute",bottom:6,left:6,display:"flex",gap:4,flexWrap:"wrap"}}>
                             <div style={{background:"rgba(0,0,0,0.45)",borderRadius:20,padding:"2px 7px",fontSize:px(9,8,8),color:"#fff",fontWeight:700}}>4:5</div>
                             {item.enhanced&&<div style={{background:"rgba(26,53,96,0.85)",borderRadius:20,padding:"2px 7px",fontSize:px(9,8,8),color:"#fff",fontWeight:700}}>⬆ 4K</div>}
+                            {item.deblurred&&<div style={{background:"rgba(16,100,60,0.88)",borderRadius:20,padding:"2px 7px",fontSize:px(9,8,8),color:"#fff",fontWeight:700}}>✦ DEBLURRED</div>}
                           </div>
                         )}
                       </div>
