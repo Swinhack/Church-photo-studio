@@ -110,3 +110,11 @@ code {
   background: var(--code-bg);
 }
 
+.counter {
+  font-size: 13px;
+  line-height: 130%;
+  padding: 0.5px 6px;
+  background: var(--accent-bg);
+  color: var(--accent);
+  border: 1px solid var(--accent-border);
+}

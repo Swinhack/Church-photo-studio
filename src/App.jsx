@@ -73,7 +73,7 @@ function needsSkinSmoothing(ctx, w, h) {
 }
 function applySkinSmooth(ctx,w,h){
   const orig=ctx.getImageData(0,0,w,h),o=orig.data;
-  const tmp=new Uint8ClampedArray(o.length),blr=new Uint8ClampedArray(o.length),R=5;
+  const tmp=new Uint8ClampedArray(o.length),blr=new Uint8ClampedArray(o.length),R=3;
   for(let y=0;y<h;y++) for(let x=0;x<w;x++){
     let sr=0,sg=0,sb=0,cnt=0;
     for(let kx=-R;kx<=R;kx++){const nx=Math.min(w-1,Math.max(0,x+kx)),ni=(y*w+nx)*4;sr+=o[ni];sg+=o[ni+1];sb+=o[ni+2];cnt++;}
@@ -192,12 +192,43 @@ function SplashScreen({ visible, fadingOut }) {
   );
 }
 
+// Fast watermark composite — no heavy processing, just redraws wm on cached base
+function compositeWatermark(baseDataUrl, watermarkImg, wmScale, wmOpacity, wmPos) {
+  return new Promise(resolve => {
+    if (!baseDataUrl) return resolve(null);
+    const img = new Image();
+    img.onload = () => {
+      const W=img.width, H=img.height;
+      const c=document.createElement("canvas"); c.width=W; c.height=H;
+      const ctx=c.getContext("2d"); ctx.drawImage(img,0,0);
+      if (watermarkImg) {
+        const pad=W*0.025, wmW=W*(wmScale/100);
+        const wmH=wmW/(watermarkImg.width/watermarkImg.height);
+        let wx,wy;
+        if(wmPos==="top-left"){wx=pad;wy=pad;}
+        else if(wmPos==="top-center"){wx=(W-wmW)/2;wy=pad;}
+        else if(wmPos==="top-right"){wx=W-wmW-pad;wy=pad;}
+        else if(wmPos==="bottom-left"){wx=pad;wy=H-wmH-pad;}
+        else if(wmPos==="bottom-right"){wx=W-wmW-pad;wy=H-wmH-pad;}
+        else{wx=(W-wmW)/2;wy=H-wmH-pad;}
+        ctx.globalAlpha=wmOpacity/100;
+        ctx.drawImage(watermarkImg,wx,wy,wmW,wmH);
+        ctx.globalAlpha=1;
+      }
+      resolve(c.toDataURL("image/jpeg",0.97));
+    };
+    img.src=baseDataUrl;
+  });
+}
+
 /* ─── main app ─────────────────────────────────────────────── */
 export default function App() {
   const { w, isMobile, isTablet } = useBreakpoint();
   const isSmall = isMobile || isTablet;
 
   const [loading,      setLoading]      = useState(true);
+  const [profileOpen,  setProfileOpen]  = useState(false);
+  const [churchName,   setChurchName]   = useState("Church Photo Studio");
   const [fadeOut,      setFadeOut]      = useState(false);
   const [watermark,    setWatermark]    = useState(null);
   const [watermarkImg, setWatermarkImg] = useState(null);
@@ -227,7 +258,7 @@ export default function App() {
   const renderToCanvas = useCallback(async (src, applyFocus = false) => {
     return new Promise(resolve => {
       const img = new Image();
-      img.onload = () => {
+      img.onload = async () => {
         const lowQ = isLowQuality(img);
         let oW=img.width, oH=img.height;
         const TARGET=4/5;
@@ -235,7 +266,7 @@ export default function App() {
         if(oW/oH>TARGET){cW=Math.round(oH*TARGET);cX=Math.round((oW-cW)/2);}
         else if(oW/oH<TARGET){cH=Math.round(oW/TARGET);}
         let W,H;
-        if(lowQ){const scale=3840/cW;W=3840;H=Math.round(cH*scale);}
+        if(lowQ){const scale=2048/cW;W=2048;H=Math.round(cH*scale);}
         else{W=cW;H=cH;}
         const off=document.createElement("canvas"); off.width=W; off.height=H;
         const oc=off.getContext("2d");
@@ -265,7 +296,18 @@ export default function App() {
           else if(wmPos==="bottom-right"){wx=W-wmW-pad;wy=H-wmH-pad;} else{wx=(W-wmW)/2;wy=H-wmH-pad;}
           ctx.globalAlpha=wmOpacity/100; ctx.drawImage(watermarkImg,wx,wy,wmW,wmH); ctx.globalAlpha=1;
         }
-        resolve({dataUrl:canvas.toDataURL("image/jpeg",0.97), enhanced:lowQ});
+        // Save base (no watermark) from off canvas
+        const baseDataUrl=off.toDataURL("image/jpeg",0.97);
+        // Composite watermark on top for final output
+        if(watermarkImg){
+          const pad=W*0.025,wmW=W*(wmScale/100),wmH=wmW/(watermarkImg.width/watermarkImg.height);
+          let wx,wy;
+          if(wmPos==="top-left"){wx=pad;wy=pad;} else if(wmPos==="top-center"){wx=(W-wmW)/2;wy=pad;}
+          else if(wmPos==="top-right"){wx=W-wmW-pad;wy=pad;} else if(wmPos==="bottom-left"){wx=pad;wy=H-wmH-pad;}
+          else if(wmPos==="bottom-right"){wx=W-wmW-pad;wy=H-wmH-pad;} else{wx=(W-wmW)/2;wy=H-wmH-pad;}
+          ctx.globalAlpha=wmOpacity/100; ctx.drawImage(watermarkImg,wx,wy,wmW,wmH); ctx.globalAlpha=1;
+        }
+        resolve({dataUrl:canvas.toDataURL("image/jpeg",0.97), baseDataUrl, enhanced:lowQ});
       };
       img.src=src;
     });
@@ -281,22 +323,37 @@ export default function App() {
     setQueue(prev=>[...prev,...items]);
     for(const item of items){
       const res=await renderToCanvas(item.original,false);
-      setQueue(prev=>prev.map(q=>q.id===item.id?{...q,status:"done",output:res.dataUrl,enhanced:res.enhanced}:q));
+      setQueue(prev=>prev.map(q=>q.id===item.id?{...q,status:"done",output:res.dataUrl,baseOutput:res.baseDataUrl,enhanced:res.enhanced}:q));
     }
   }, [renderToCanvas]);
 
+  // Full reprocess only when watermark image changes
   useEffect(()=>{
     if(!queue.length) return;
     const run=async()=>{
       for(const item of queue){
         setQueue(prev=>prev.map(q=>q.id===item.id?{...q,status:"processing"}:q));
         const res=await renderToCanvas(item.original,false);
-        const fRes=item.focusOutput?await renderToCanvas(item.original,true):null;
-        setQueue(prev=>prev.map(q=>q.id===item.id?{...q,status:"done",output:res.dataUrl,enhanced:res.enhanced,focusOutput:fRes?.dataUrl||null}:q));
+        setQueue(prev=>prev.map(q=>q.id===item.id?{...q,status:"done",output:res.dataUrl,baseOutput:res.baseDataUrl,enhanced:res.enhanced}:q));
       }
     };
     run();
-  },[watermarkImg,wmScale,wmOpacity,wmPos]);
+  },[watermarkImg]);
+
+  // Fast path — only recomposites watermark on cached base (instant slider response)
+  useEffect(()=>{
+    if(!queue.length) return;
+    let cancelled=false;
+    const run=async()=>{
+      for(const item of queue){
+        if(cancelled||!item.baseOutput) continue;
+        const output=await compositeWatermark(item.baseOutput,watermarkImg,wmScale,wmOpacity,wmPos);
+        if(!cancelled) setQueue(prev=>prev.map(q=>q.id===item.id?{...q,output}:q));
+      }
+    };
+    run();
+    return()=>{cancelled=true;};
+  },[wmScale,wmOpacity,wmPos]);
 
   const toggleFocus=useCallback(async(id)=>{
     const item=queue.find(q=>q.id===id);
@@ -313,7 +370,24 @@ export default function App() {
 
   const dl=(item)=>{
     const src=item.focusActive&&item.focusOutput?item.focusOutput:item.output;
-    const a=document.createElement("a"); a.href=src; a.download=`portrait-${item.name.replace(/\.[^.]+$/,"")}.jpg`; a.click();
+    if(!src) return;
+    try {
+      const byteStr=atob(src.split(",")[1]);
+      const mime=src.split(",")[0].split(":")[1].split(";")[0];
+      const ab=new ArrayBuffer(byteStr.length);
+      const ia=new Uint8Array(ab);
+      for(let i=0;i<byteStr.length;i++) ia[i]=byteStr.charCodeAt(i);
+      const blob=new Blob([ab],{type:mime});
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement("a");
+      a.href=url;
+      a.download=`portrait-${item.name.replace(/\.[^.]+$/,"")}.jpg`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(()=>URL.revokeObjectURL(url),1000);
+    } catch(e) {
+      const w=window.open("","_blank");
+      if(w) { w.document.write(`<img src="${src}" style="max-width:100%;display:block" />`); w.document.title="Save this image"; }
+    }
   };
   const dlAll=()=>queue.filter(q=>q.status==="done").forEach((item,i)=>setTimeout(()=>dl(item),i*250));
   const doneCount=queue.filter(q=>q.status==="done").length;
@@ -338,6 +412,106 @@ export default function App() {
         ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:#c0cfe0;border-radius:4px}
       `}</style>
 
+      {/* ── Full Profile Page ── */}
+      {profileOpen && (
+        <div style={{
+          position:"fixed",inset:0,zIndex:9000,background:"#f0f2f5",
+          fontFamily:"'Segoe UI',system-ui,sans-serif",
+          animation:"fadeIn 0.25s ease",overflowY:"auto",
+        }}>
+          {/* Topbar */}
+          <div style={{
+            background:"#fff",borderBottom:"1px solid #dde4ef",height:56,
+            display:"flex",alignItems:"center",padding:"0 20px",gap:12,
+            position:"sticky",top:0,zIndex:10,
+          }}>
+            <button onClick={()=>setProfileOpen(false)} style={{
+              width:36,height:36,borderRadius:"50%",border:"1.5px solid #d0daea",
+              background:"#f8fafd",cursor:"pointer",display:"flex",
+              alignItems:"center",justifyContent:"center",flexShrink:0,
+            }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1a3560" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="15 18 9 12 15 6"/>
+              </svg>
+            </button>
+            <div style={{fontWeight:700,fontSize:15,color:"#111"}}>Edit Church Profile</div>
+          </div>
+
+          {/* Hero banner */}
+          <div style={{background:"linear-gradient(135deg,#0d1b35 0%,#1a3560 100%)",height:160,position:"relative",overflow:"hidden"}}>
+            <div style={{position:"absolute",top:-40,right:-40,width:180,height:180,borderRadius:"50%",background:"rgba(255,255,255,0.04)"}}/>
+            <div style={{position:"absolute",bottom:-60,left:-20,width:200,height:200,borderRadius:"50%",background:"rgba(255,255,255,0.03)"}}/>
+          </div>
+
+          {/* Profile section */}
+          <div style={{display:"flex",flexDirection:"column",alignItems:"center",marginTop:-70,padding:"0 20px"}}>
+            {/* Profile picture */}
+            <div style={{position:"relative",marginBottom:12}}>
+              <div style={{
+                width:130,height:130,borderRadius:"50%",
+                background:profilePic?"transparent":"#1a3560",
+                border:"5px solid #fff",overflow:"hidden",
+                boxShadow:"0 8px 30px rgba(0,0,0,0.18)",
+              }}>
+                {profilePic
+                  ? <img src={profilePic} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                  : <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:6}}>
+                      <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                        <circle cx="12" cy="13" r="4"/>
+                      </svg>
+                      <span style={{fontSize:10,color:"rgba(255,255,255,0.5)"}}>No photo</span>
+                    </div>
+                }
+              </div>
+              {/* Camera button */}
+              <div style={{position:"relative"}}>
+                <div style={{
+                  position:"absolute",bottom:4,right:4,width:34,height:34,
+                  borderRadius:"50%",background:"#1a3560",border:"3px solid #fff",
+                  display:"flex",alignItems:"center",justifyContent:"center",
+                  cursor:"pointer",boxShadow:"0 2px 10px rgba(0,0,0,0.25)",
+                }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                    <circle cx="12" cy="13" r="4"/>
+                  </svg>
+                </div>
+                <input type="file" accept="image/*"
+                  onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setProfilePic(ev.target.result);r.readAsDataURL(f);}}
+                  style={{position:"absolute",bottom:4,right:4,width:34,height:34,opacity:0,cursor:"pointer",zIndex:5}}
+                />
+              </div>
+            </div>
+
+            <div style={{fontSize:12,color:"#aaa",marginBottom:24}}>Tap the camera icon to change photo</div>
+
+            {/* Form card */}
+            <div style={{
+              width:"100%",maxWidth:480,background:"#fff",borderRadius:16,
+              border:"1px solid #dde4ef",padding:24,boxSizing:"border-box",marginBottom:32,
+            }}>
+              <div style={{fontSize:13,fontWeight:700,color:"#1a3560",marginBottom:18}}>Church Details</div>
+              <div style={{marginBottom:16}}>
+                <div style={{fontSize:11,color:"#888",fontWeight:600,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Church Name</div>
+                <input value={churchName} onChange={e=>setChurchName(e.target.value)}
+                  placeholder="e.g. Living Faith Church Woji"
+                  style={{
+                    width:"100%",padding:"12px 14px",border:"1.5px solid #d0daea",
+                    borderRadius:9,fontSize:14,color:"#111",outline:"none",
+                    background:"#f8fafd",boxSizing:"border-box",fontFamily:"inherit",
+                  }}
+                />
+              </div>
+              <button onClick={()=>setProfileOpen(false)} style={{
+                width:"100%",background:"#1a3560",color:"#fff",border:"none",
+                borderRadius:10,padding:13,fontSize:14,fontWeight:700,cursor:"pointer",
+              }}>Save & Continue</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {loading && <SplashScreen fadingOut={fadeOut} />}
 
       <div style={{
@@ -353,30 +527,39 @@ export default function App() {
           display:"flex", alignItems:"center", gap:px(12,8,10),
           position:"sticky", top:0, zIndex:100,
         }}>
-          <div style={{position:"relative",flexShrink:0}}>
+          <div style={{position:"relative",flexShrink:0,marginRight:4}}>
+            {/* Circular profile picture */}
             <div style={{
-              width:px(42,36,40), height:px(42,36,40), borderRadius:11,
+              width:52, height:52, borderRadius:"50%",
               background:profilePic?"transparent":"#1a3560",
-              border:profilePic?"2px solid #1a3560":"none",
+              border:"3px solid #1a3560",
               display:"flex",alignItems:"center",justifyContent:"center",
-              overflow:"hidden",cursor:"pointer",
+              overflow:"hidden",
+              boxShadow:"0 2px 12px rgba(26,53,96,0.25)",
             }}>
               {profilePic
                 ?<img src={profilePic} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-                :<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                :<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
                   <circle cx="12" cy="13" r="4"/>
                 </svg>
               }
             </div>
-            <input type="file" accept="image/*"
-              onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setProfilePic(ev.target.result);r.readAsDataURL(f);}}
-              style={{position:"absolute",inset:0,opacity:0,cursor:"pointer",width:"100%",height:"100%"}}/>
+            {/* Edit badge — opens profile modal */}
+            <div onClick={()=>setProfileOpen(true)} style={{
+              position:"absolute",bottom:-4,left:"50%",transform:"translateX(-50%)",
+              background:"#1a3560",borderRadius:20,padding:"2px 8px",
+              display:"flex",alignItems:"center",gap:3,
+              border:"2px solid #fff",zIndex:4,whiteSpace:"nowrap",
+              boxShadow:"0 1px 4px rgba(0,0,0,0.2)",cursor:"pointer",
+            }}>
+              <span style={{fontSize:9,color:"#fff",fontWeight:700,letterSpacing:"0.03em"}}>Edit</span>
+            </div>
           </div>
           <div style={{flex:1,minWidth:0}}>
-            <div style={{fontWeight:700,fontSize:px(14,12,13),color:"#111",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>Church Photo Studio</div>
+            <div style={{fontWeight:700,fontSize:px(14,12,13),color:"#111",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{churchName}</div>
             <div style={{fontSize:px(11,10,10),color:"#999",display:isMobile?"none":"block"}}>
-              {profilePic?"Click icon to change profile":"Click icon to upload church profile"}
+              {profilePic?"Click photo to update church profile":"Click to upload church profile picture"}
             </div>
           </div>
           {doneCount>0&&(
