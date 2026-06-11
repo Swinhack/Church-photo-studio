@@ -227,12 +227,12 @@ function SplashScreen({ visible, fadingOut }) {
         fontSize:"clamp(20px,5vw,30px)", fontWeight:800, color:"#fff",
         letterSpacing:"-0.03em", marginBottom:8, textAlign:"center", padding:"0 16px",
         animation:"fadeUp 0.6s ease 0.3s both",
-      }}>Church Photo Studio</div>
+      }}>AutoEnhance</div>
       <div style={{
         fontSize:"clamp(10px,2.5vw,13px)", color:"rgba(255,255,255,0.45)",
         letterSpacing:"0.08em", textTransform:"uppercase",
         animation:"fadeUp 0.6s ease 0.5s both",
-      }}>Media Enhancement Suite</div>
+      }}>Auto Photo Enhancement</div>
       <div style={{
         marginTop:44, width:"clamp(120px,40vw,180px)", height:3,
         background:"rgba(255,255,255,0.10)", borderRadius:4, overflow:"hidden",
@@ -284,7 +284,12 @@ export default function App() {
 
   const [loading,      setLoading]      = useState(true);
   const [profileOpen,  setProfileOpen]  = useState(false);
-  const [churchName,   setChurchName]   = useState(() => localStorage.getItem("cps_churchName") || "Church Photo Studio");
+  const [churchName,   setChurchName]   = useState(() => {
+    const saved = localStorage.getItem("cps_churchName");
+    // Reset old default names to the new default
+    if (!saved || saved === "Church Photo Studio" || saved === "AutoEnhance") return "Photo Studio";
+    return saved;
+  });
   const [fadeOut,      setFadeOut]      = useState(false);
   const [watermark,    setWatermark]    = useState(null);
   const [watermarkImg, setWatermarkImg] = useState(null);
@@ -508,7 +513,7 @@ export default function App() {
                 <polyline points="15 18 9 12 15 6"/>
               </svg>
             </button>
-            <div style={{fontWeight:700,fontSize:15,color:"#111"}}>Edit Church Profile</div>
+            <div style={{fontWeight:700,fontSize:15,color:"#111"}}>Edit Profile</div>
           </div>
 
           {/* Hero banner */}
@@ -565,11 +570,11 @@ export default function App() {
               width:"100%",maxWidth:480,background:"#fff",borderRadius:16,
               border:"1px solid #dde4ef",padding:24,boxSizing:"border-box",marginBottom:32,
             }}>
-              <div style={{fontSize:13,fontWeight:700,color:"#1a3560",marginBottom:18}}>Church Details</div>
+              <div style={{fontSize:13,fontWeight:700,color:"#1a3560",marginBottom:18}}>Profile Details</div>
               <div style={{marginBottom:16}}>
                 <div style={{fontSize:11,color:"#888",fontWeight:600,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Church Name</div>
                 <input value={churchName} onChange={e=>setChurchName(e.target.value)}
-                  placeholder="e.g. Living Faith Church Woji"
+                  placeholder="e.g. Your Organisation Name"
                   style={{
                     width:"100%",padding:"12px 14px",border:"1.5px solid #d0daea",
                     borderRadius:9,fontSize:14,color:"#111",outline:"none",
@@ -604,12 +609,12 @@ export default function App() {
           <div style={{position:"relative",flexShrink:0,marginRight:4}}>
             {/* Circular profile picture — click opens profile page */}
             <div onClick={()=>setProfileOpen(true)} style={{
-              width:52, height:52, borderRadius:"50%",
+              width:38, height:38, borderRadius:"50%",
               background:profilePic?"transparent":"#1a3560",
-              border:"3px solid #1a3560",
+              border:"2.5px solid #1a3560",
               display:"flex",alignItems:"center",justifyContent:"center",
               overflow:"hidden", cursor:"pointer",
-              boxShadow:"0 2px 12px rgba(26,53,96,0.25)",
+              boxShadow:"0 2px 8px rgba(26,53,96,0.2)",
               transition:"transform 0.15s, box-shadow 0.15s",
             }}
               onMouseEnter={e=>{e.currentTarget.style.transform="scale(1.06)";e.currentTarget.style.boxShadow="0 4px 16px rgba(26,53,96,0.4)";}}
@@ -617,7 +622,7 @@ export default function App() {
             >
               {profilePic
                 ?<img src={profilePic} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-                :<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                :<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
                   <circle cx="12" cy="13" r="4"/>
                 </svg>
@@ -627,7 +632,7 @@ export default function App() {
           <div style={{flex:1,minWidth:0}}>
             <div style={{fontWeight:700,fontSize:px(14,12,13),color:"#111",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{churchName}</div>
             <div style={{fontSize:px(11,10,10),color:"#999",display:isMobile?"none":"block"}}>
-              {profilePic?"Click photo to update church profile":"Click to upload church profile picture"}
+              {profilePic?"Click photo to update profile":"Click to upload profile picture"}
             </div>
           </div>
           {doneCount>0&&(
@@ -734,7 +739,7 @@ export default function App() {
                   <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
                 </svg>
               </div>
-              <div style={{fontWeight:700,fontSize:px(16,14,15),color:"#1a1a2e",marginBottom:6,pointerEvents:"none"}}>Upload Church Photos</div>
+              <div style={{fontWeight:700,fontSize:px(16,14,15),color:"#1a1a2e",marginBottom:6,pointerEvents:"none"}}>Upload Photos</div>
               <div style={{fontSize:px(13,11,12),color:"#aaa",pointerEvents:"none"}}>
                 {isMobile?"Tap to select photos":"Drag & drop or click · Multiple photos · Enhancements applied automatically"}
               </div>
