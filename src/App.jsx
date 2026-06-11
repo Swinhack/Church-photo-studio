@@ -315,7 +315,7 @@ export default function App() {
     else localStorage.removeItem("cps_profilePic");
   }, [profilePic]);
 
-  // Persist church name to localStorage
+  // Persist brand name to localStorage
   useEffect(() => {
     localStorage.setItem("cps_churchName", churchName);
   }, [churchName]);
@@ -572,7 +572,7 @@ export default function App() {
             }}>
               <div style={{fontSize:13,fontWeight:700,color:"#1a3560",marginBottom:18}}>Profile Details</div>
               <div style={{marginBottom:16}}>
-                <div style={{fontSize:11,color:"#888",fontWeight:600,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Church Name</div>
+                <div style={{fontSize:11,color:"#888",fontWeight:600,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Brand Name</div>
                 <input value={churchName} onChange={e=>setChurchName(e.target.value)}
                   placeholder="e.g. Your Organisation Name"
                   style={{
